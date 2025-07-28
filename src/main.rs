@@ -5,16 +5,19 @@ use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 pub mod colormap;
 use crate::colormap::*;
 
-
 fn colormap(value: f64, colormap: &[[u8; 4]]) -> [u8; 4] {
-    let idx = (127. * value + 127.) as usize;
+    let idx = (255. * value) as usize;
     colormap[idx]
 }
 
+// value is heightmap on [0.0, 1.0]
+// xnorm is x position normalized to [0.0, 1.0]
+// ynorm is y position normalized to [0.0, 1.0]
 fn sink_edges(value: f64, xnorm: f64, ynorm: f64) -> f64 {
-    let x = (xnorm - 0.5).abs();
-    let y = (ynorm - 0.5).abs();
-    value - 5.*(x*x+y*y)
+    let x = 2. * (xnorm - 0.5);
+    let y = 2. * (ynorm - 0.5);
+    let output = value * (1.0 - (x * x + y * y));
+    if output < 0.0 { 0.0 } else { output }
 }
 
 // Return cardinal neighbors of point, [West, North, East, South]
@@ -76,25 +79,17 @@ fn talus_erosion_iteration(map: &mut [Vec<f64>], limit: f64, amount: f64) {
     // Compute heightmap gradients
     let grads = map_gradient(map);
 
-    for y in 1..map.len()-1 {
-        for x in 1..map[y].len()-1 {
+    for y in 1..map.len() - 1 {
+        for x in 1..map[y].len() - 1 {
             let (dx, dy) = grads[y][x];
             if dx.abs() > dy.abs() && dx.abs() > limit {
                 // Erode in dx direction
-                let xother = if dx > 0.0 {
-                    x - 1
-                } else {
-                    x + 1
-                };
+                let xother = if dx > 0.0 { x - 1 } else { x + 1 };
                 map[y][x] -= amount;
                 map[y][xother] += amount;
             } else if dy.abs() > limit {
                 // Erode in dy direction
-                let yother = if dy > 0.0 {
-                    y - 1
-                } else {
-                    y + 1
-                };
+                let yother = if dy > 0.0 { y - 1 } else { y + 1 };
                 map[y][x] -= amount;
                 map[yother][x] += amount;
             }
@@ -119,8 +114,8 @@ fn colorize(map: &[Vec<f64>]) -> Vec<u8> {
 fn hydraulic_erosion_iteration(map: &mut [Vec<f64>], steps: usize, limit: f64, amount: f64) {
     // Spawn random drop location according to rainfall distribution
     let grads = map_gradient(map);
-    let mut x = ::rand::random_range(1..=map[0].len()-1);
-    let mut y = ::rand::random_range(1..=map.len()-1);
+    let mut x = ::rand::random_range(1..=map[0].len() - 1);
+    let mut y = ::rand::random_range(1..=map.len() - 1);
 
     // move drop some number of steps (while height > waterlevel), or some limit for evaporation
     if map[y][x] < 0.0 {
@@ -145,11 +140,7 @@ fn hydraulic_erosion_iteration(map: &mut [Vec<f64>], steps: usize, limit: f64, a
                     map[y][x] += amount;
                 }
             }
-            x = if dx > 0.0 {
-                x - 1
-            } else {
-                x + 1
-            };
+            x = if dx > 0.0 { x - 1 } else { x + 1 };
         } else if dy.abs() > limit {
             if dy.abs() > limit {
                 // "Fast" so pick up sediments, move in Y direction
@@ -163,31 +154,35 @@ fn hydraulic_erosion_iteration(map: &mut [Vec<f64>], steps: usize, limit: f64, a
                     map[y][x] += amount;
                 }
             }
-            y = if dy > 0.0 {
-                y - 1
-            } else {
-                y + 1
-            };
+            y = if dy > 0.0 { y - 1 } else { y + 1 };
         }
     }
 
     map[y][x] += sediment;
 }
 
-#[macroquad::main("RPCG")]
-async fn main() {
-    let fbm = Fbm::<Perlin>::new(1337)
-        .set_octaves(5)
-        .set_frequency(0.005);
+fn generate_heightmap() -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
+    let seed: u32 = ::rand::random();
+    println!("seed: {}", seed);
+    let fbm = Fbm::<Perlin>::new(seed).set_octaves(5).set_frequency(0.005);
     let w = screen_width();
     let h = screen_height();
-    
+
     // Base heightmap
     let mut heightmap = vec![vec![0.0; w as usize]; h as usize];
     for row in 0..h as usize {
         for col in 0..w as usize {
-            let value = fbm.get([col as f64, row as f64]);
-            let value2 = sink_edges(value, col as f64 / w as f64, row as f64 / h as f64);
+            // value on [0.0, 1.0]
+            let value = 0.5 * fbm.get([col as f64, row as f64]) + 0.5;
+            let value2 = sink_edges(
+                value,
+                col as f64 / (w - 1.) as f64,
+                row as f64 / (h - 1.) as f64,
+            );
+            if value2 < 0.0 || value2 > 1.0 {
+                eprintln!("value2: {}", value2);
+                panic!("value2 not in [0.0, 1.0]");
+            }
             heightmap[row][col] = value2;
         }
     }
@@ -195,9 +190,9 @@ async fn main() {
 
     // Erosion
     if true {
-        let limit = 1e-2;
+        let limit = 1e-3;
         let amount = 1e-3;
-        for _ in 0..100 {
+        for _ in 0..10 {
             talus_erosion_iteration(&mut heightmap, limit, amount);
         }
     }
@@ -210,14 +205,27 @@ async fn main() {
             hydraulic_erosion_iteration(&mut heightmap, drop_steps, limit, amount);
         }
     }
+    (heightmap, before)
+}
+
+fn heightmap_to_texture(map: &[Vec<f64>]) -> Texture2D {
+    let w = screen_width();
+    let h = screen_height();
 
     // Colorize
-    let before_rgba = colorize(&before);
-    let rgba = colorize(&heightmap);
+    let rgba = colorize(&map);
 
     // Textures
-    let before_texture = Texture2D::from_rgba8(w as u16, h as u16, &before_rgba);
-    let texture = Texture2D::from_rgba8(w as u16, h as u16, &rgba);
+    Texture2D::from_rgba8(w as u16, h as u16, &rgba)
+}
+
+#[macroquad::main("RPCG")]
+async fn main() {
+    let (mut heightmap, mut before) = generate_heightmap();
+
+    // Textures
+    let mut before_texture = heightmap_to_texture(&before);
+    let mut texture = heightmap_to_texture(&heightmap);
 
     let mut screen = 0;
 
@@ -229,6 +237,13 @@ async fn main() {
         if is_key_pressed(KeyCode::Space) {
             screen += 1;
             screen %= 2;
+        }
+
+        if is_key_pressed(KeyCode::Enter) {
+            println!("Generating new map...");
+            (heightmap, before) = generate_heightmap();
+            before_texture = heightmap_to_texture(&before);
+            texture = heightmap_to_texture(&heightmap);
         }
 
         // Draw
