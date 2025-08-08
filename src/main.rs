@@ -232,7 +232,7 @@ fn do_erosion(map: &mut Map<f64>, stream: &mut Map<f64>, pool: &mut Map<f64>, tr
 
 #[macroquad::main("RPCG")]
 async fn main() {
-    let mut seed = ::rand::random();
+    let mut seed: u32 = ::rand::random();
     let mut w = screen_width();
     let mut h = screen_height();
     //request_new_screen_size(1920., 1080.);
