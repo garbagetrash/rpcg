@@ -83,8 +83,7 @@ fn colorize(map: &Map<f64>) -> Vec<u8> {
     rgba
 }
 
-fn generate_heightmap() -> Map<f64> {
-    let seed: u32 = ::rand::random();
+fn generate_heightmap(seed: u32) -> Map<f64> {
     println!("seed: {}", seed);
     let fbm = Fbm::<Perlin>::new(seed).set_octaves(5).set_frequency(0.005);
     let w = screen_width();
@@ -214,18 +213,20 @@ impl WaterUnit {
 }
 
 fn hydraulic_erosion_iteration(map: &mut Map<f64>, stream: &mut Map<f64>, pool: &mut Map<f64>, track: &mut Map<bool>, steps: usize) {
+    /*
+    let x = ::rand::random_range(1..=map.dims.0 - 1);
+    let y = ::rand::random_range(1..=map.dims.1 - 1);
+    let mut drop = WaterUnit::new(x, y);
     for _ in 0..steps {
-        let x = ::rand::random_range(1..=map.dims.0 - 1);
-        let y = ::rand::random_range(1..=map.dims.1 - 1);
-        let mut drop = WaterUnit::new(x, y);
         drop.descend(map, track);
     }
+    */
 }
 
 fn do_erosion(map: &mut Map<f64>, stream: &mut Map<f64>, pool: &mut Map<f64>, track: &mut Map<bool>) {
-    if true {
+    for _ in 0..1000 {
         // Very WIP, not great.
-        let drop_steps = 1000;
+        let drop_steps = 300;
         hydraulic_erosion_iteration(map, stream, pool, track, drop_steps);
     }
 }
@@ -236,7 +237,7 @@ async fn main() {
     let mut w = screen_width();
     let mut h = screen_height();
     //request_new_screen_size(1920., 1080.);
-    let mut heightmap = generate_heightmap();
+    let mut heightmap = generate_heightmap(seed);
 
     // Track tells where water ran this iteration
     let mut track = Map::<bool>::zeroed(w as usize, h as usize);
@@ -262,7 +263,7 @@ async fn main() {
         if screen_width() != w || screen_height() != h {
             w = screen_width();
             h = screen_height();
-            heightmap = generate_heightmap();
+            heightmap = generate_heightmap(seed);
             let before = heightmap.clone();
             do_erosion(&mut heightmap, &mut stream, &mut pool, &mut track);
             before_texture = heightmap_to_texture(&before);
@@ -285,7 +286,8 @@ async fn main() {
 
         if is_key_pressed(KeyCode::Enter) {
             println!("Generating new map...");
-            heightmap = generate_heightmap();
+            seed = ::rand::random();
+            heightmap = generate_heightmap(seed);
             let before = heightmap.clone();
             do_erosion(&mut heightmap, &mut stream, &mut pool, &mut track);
             before_texture = heightmap_to_texture(&before);
