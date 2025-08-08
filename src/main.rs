@@ -14,19 +14,19 @@ struct Map<T> {
 }
 
 impl<T: Clone + Default> Map<T> {
-    fn zeroed(height: usize, width: usize) -> Self {
+    fn zeroed(width: usize, height: usize) -> Self {
         Self {
-            dims: (height, width),
+            dims: (width, height),
             data: vec![T::default(); height * width],
         }
     }
 
     fn get(&self, x: usize, y: usize) -> &T {
-        &self.data[x*self.dims.1 + y]
+        &self.data[y*self.dims.0 + x]
     }
 
     fn get_mut(&mut self, x: usize, y: usize) -> &mut T {
-        &mut self.data[x*self.dims.1 + y]
+        &mut self.data[y*self.dims.0 + x]
     }
 }
 
@@ -105,7 +105,7 @@ fn generate_heightmap() -> Map<f64> {
                 eprintln!("value2: {}", value2);
                 panic!("value2 not in [0.0, 1.0]");
             }
-            *heightmap.get_mut(row, col) = value2;
+            *heightmap.get_mut(col, row) = value2;
         }
     }
     heightmap
