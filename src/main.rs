@@ -1,3 +1,5 @@
+#![allow(unused, non_upper_case_globals)]
+
 use ::rand::prelude::*;
 use macroquad::prelude::*;
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
@@ -25,7 +27,7 @@ impl<T: Clone + Default> Map<T> {
 }
 
 fn colormap(value: f64, colormap: &[[u8; 4]]) -> [u8; 4] {
-    let idx = (255. * value) as usize;
+    let idx = (255. * value.clamp(0.0, 1.0)) as usize;
     colormap[idx]
 }
 
@@ -36,7 +38,7 @@ fn sink_edges(value: f64, xnorm: f64, ynorm: f64) -> f64 {
     let x = 2. * (xnorm - 0.5);
     let y = 2. * (ynorm - 0.5);
     let output = value * (1.0 - (x * x + y * y));
-    if output < 0.0 { 0.0 } else { output }
+    output.clamp(0.0, 1.0)
 }
 
 // Return cardinal neighbors of point, [North, East, South, West]
@@ -180,9 +182,8 @@ fn hydraulic_erosion_iteration(map: &mut [Vec<f64>], steps: usize, limit: f64, a
     map[y][x] += sediment;
 }
 
-fn generate_heightmap() -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
-    let seed: u32 = ::rand::random();
-    println!("seed: {}", seed);
+fn generate_heightmap(seed: u32) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
+    println!("seed: {seed}");
     let fbm = Fbm::<Perlin>::new(seed).set_octaves(5).set_frequency(0.005);
     let w = screen_width();
     let h = screen_height();
@@ -305,7 +306,7 @@ impl WaterUnit {
         if ceq < 0.0 {
             ceq = 0.0;
         }
-        let cdiff = ceq - 
+        // let cdiff = ceq - 
     }
 
     fn flood(&mut self, map: &mut [Vec<f64>]) {
@@ -323,10 +324,10 @@ fn hydraulic_erosion_iteration2(map: &mut [Vec<f64>], stream: &mut [Vec<f64>], p
 
 #[macroquad::main("RPCG")]
 async fn main() {
+    let mut seed = ::rand::random();
     let mut w = screen_width();
     let mut h = screen_height();
-    request_new_screen_size(1920., 1080.);
-    let (mut heightmap, mut before) = generate_heightmap();
+    let (mut heightmap, mut before) = generate_heightmap(seed);
 
     // Track tells where water ran this iteration
     let mut track = Map::<bool>::zeroed(w as usize, h as usize);
@@ -347,7 +348,7 @@ async fn main() {
         if screen_width() != w || screen_height() != h {
             w = screen_width();
             h = screen_height();
-            (heightmap, before) = generate_heightmap();
+            (heightmap, before) = generate_heightmap(seed);
             before_texture = heightmap_to_texture(&before);
             texture = heightmap_to_texture(&heightmap);
         }
@@ -360,9 +361,16 @@ async fn main() {
             screen %= 2;
         }
 
+        if is_key_pressed(KeyCode::S) {
+            let filename = format!("Island_{seed}.png");
+            println!("Saving to {filename}");
+            texture.get_texture_data().export_png(&filename);
+        }
+
         if is_key_pressed(KeyCode::Enter) {
             println!("Generating new map...");
-            (heightmap, before) = generate_heightmap();
+            seed = ::rand::random();
+            (heightmap, before) = generate_heightmap(seed);
             before_texture = heightmap_to_texture(&before);
             texture = heightmap_to_texture(&heightmap);
         }
