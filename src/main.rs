@@ -24,6 +24,10 @@ impl<T: Clone + Default> Map<T> {
     fn get(&self, x: usize, y: usize) -> &T {
         &self.data[x*self.dims.1 + y]
     }
+
+    fn get_mut(&mut self, x: usize, y: usize) -> &mut T {
+        &mut self.data[x*self.dims.1 + y]
+    }
 }
 
 fn colormap(value: f64, colormap: &[[u8; 4]]) -> [u8; 4] {
@@ -67,129 +71,27 @@ fn get_neighbors(point: (usize, usize), xmax: usize, ymax: usize) -> Vec<Option<
     output
 }
 
-// Define positive x gradient as East, positive y gradient as South.
-fn map_gradient(map: &[Vec<f64>]) -> Vec<Vec<(f64, f64)>> {
-    let mut output = vec![];
-    for y in 0..map.len() {
-        let mut row = vec![(0.0, 0.0); map[y].len()];
-        for x in 0..map[y].len() {
-            let h = map[y][x];
-            let n = get_neighbors((x, y), map[y].len(), map.len());
-            let mut dx = 0.0;
-            if let Some(nn) = n[0] {
-                dx += (h - map[nn.1][nn.0]) / 2.0;
-            }
-            if let Some(nn) = n[2] {
-                dx += (map[nn.1][nn.0] - h) / 2.0;
-            }
-            let mut dy = 0.0;
-            if let Some(nn) = n[1] {
-                dy += (h - map[nn.1][nn.0]) / 2.0;
-            }
-            if let Some(nn) = n[3] {
-                dy += (map[nn.1][nn.0] - h) / 2.0;
-            }
-            row[x] = (dx, dy);
-        }
-        output.push(row);
-    }
-    output
-}
-
-fn talus_erosion_iteration(map: &mut [Vec<f64>], limit: f64, amount: f64) {
-    // Compute heightmap gradients
-    let grads = map_gradient(map);
-
-    for y in 1..map.len() - 1 {
-        for x in 1..map[y].len() - 1 {
-            let (dx, dy) = grads[y][x];
-            if dx.abs() > dy.abs() && dx.abs() > limit {
-                // Erode in dx direction
-                let xother = if dx > 0.0 { x - 1 } else { x + 1 };
-                map[y][x] -= amount;
-                map[y][xother] += amount;
-            } else if dy.abs() > limit {
-                // Erode in dy direction
-                let yother = if dy > 0.0 { y - 1 } else { y + 1 };
-                map[y][x] -= amount;
-                map[yother][x] += amount;
-            }
-        }
-    }
-}
-
-fn colorize(map: &[Vec<f64>]) -> Vec<u8> {
+fn colorize(map: &Map<f64>) -> Vec<u8> {
     let mut rgba = vec![];
-    for row in 0..map.len() {
-        for col in 0..map[row].len() {
-            let value = colormap(map[row][col], &greyscale);
-            rgba.push(value[0]);
-            rgba.push(value[1]);
-            rgba.push(value[2]);
-            rgba.push(value[3]);
-        }
+    for &_value in &map.data {
+        let value = colormap(_value, &greyscale);
+        rgba.push(value[0]);
+        rgba.push(value[1]);
+        rgba.push(value[2]);
+        rgba.push(value[3]);
     }
     rgba
 }
 
-fn hydraulic_erosion_iteration(map: &mut [Vec<f64>], steps: usize, limit: f64, amount: f64) {
-    // Spawn random drop location according to rainfall distribution
-    let grads = map_gradient(map);
-    let mut x = ::rand::random_range(1..=map[0].len() - 1);
-    let mut y = ::rand::random_range(1..=map.len() - 1);
-
-    // move drop some number of steps (while height > waterlevel), or some limit for evaporation
-    if map[y][x] < 0.0 {
-        return;
-    }
-    let mut sediment = 0.0;
-    for i in 0..steps {
-        if x == 0 || y == 0 || x == map[0].len() - 1 || y == map.len() - 1 {
-            break;
-        }
-        let (dx, dy) = grads[y][x];
-        if dx.abs() > dy.abs() {
-            if dx.abs() > limit {
-                // "Fast" so pick up sediments, move in X direction
-                // Erode in dx direction
-                map[y][x] -= amount;
-                sediment += amount;
-            } else {
-                // "Slow" so drop sediment
-                if sediment > 0.0 {
-                    sediment -= amount;
-                    map[y][x] += amount;
-                }
-            }
-            x = if dx > 0.0 { x - 1 } else { x + 1 };
-        } else if dy.abs() > limit {
-            if dy.abs() > limit {
-                // "Fast" so pick up sediments, move in Y direction
-                // Erode in dy direction
-                map[y][x] -= amount;
-                sediment += amount;
-            } else {
-                // "Slow" so drop sediment
-                if sediment > 0.0 {
-                    sediment -= amount;
-                    map[y][x] += amount;
-                }
-            }
-            y = if dy > 0.0 { y - 1 } else { y + 1 };
-        }
-    }
-
-    map[y][x] += sediment;
-}
-
-fn generate_heightmap(seed: u32) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
-    println!("seed: {seed}");
+fn generate_heightmap() -> Map<f64> {
+    let seed: u32 = ::rand::random();
+    println!("seed: {}", seed);
     let fbm = Fbm::<Perlin>::new(seed).set_octaves(5).set_frequency(0.005);
     let w = screen_width();
     let h = screen_height();
 
     // Base heightmap
-    let mut heightmap = vec![vec![0.0; w as usize]; h as usize];
+    let mut heightmap = Map::<f64>::zeroed(w as usize, h as usize);
     for row in 0..h as usize {
         for col in 0..w as usize {
             // value on [0.0, 1.0]
@@ -203,32 +105,13 @@ fn generate_heightmap(seed: u32) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
                 eprintln!("value2: {}", value2);
                 panic!("value2 not in [0.0, 1.0]");
             }
-            heightmap[row][col] = value2;
+            *heightmap.get_mut(row, col) = value2;
         }
     }
-    let before = heightmap.clone();
-
-    // Erosion
-    if true {
-        let limit = 1e-3;
-        let amount = 1e-3;
-        for _ in 0..10 {
-            talus_erosion_iteration(&mut heightmap, limit, amount);
-        }
-    }
-    if false {
-        // Very WIP, not great.
-        let drop_steps = 1000;
-        let limit = 1e-2;
-        let amount = 3e-2;
-        for _ in 0..200 {
-            hydraulic_erosion_iteration(&mut heightmap, drop_steps, limit, amount);
-        }
-    }
-    (heightmap, before)
+    heightmap
 }
 
-fn heightmap_to_texture(map: &[Vec<f64>]) -> Texture2D {
+fn heightmap_to_texture(map: &Map<f64>) -> Texture2D {
     let w = screen_width();
     let h = screen_height();
 
@@ -289,24 +172,40 @@ impl WaterUnit {
     }
 
     fn descend(&mut self, map: &mut Map<f64>, track: &mut Map<bool>) {
+
+        // Hardcoded trash
         let dt = 0.1;
         let friction = 0.1;
-        let h0 = map.get(self.pos.0, self.pos.1);
+        let deposition_rate = 0.1;
+        let evaporation_rate = 0.1;
+
+        // Update physical parameters
         let n = normal(self.pos, map);
         let mass = self.volume * self.density;
+        let h0 = map.get(self.pos.0, self.pos.1);
         self.velocity.0 += dt * n.0 / mass;
         self.velocity.1 += dt * n.1 / mass;
-        self.pos.0 = (self.pos.0 as f64  + dt * self.velocity.0) as usize;
-        self.pos.1 = (self.pos.1 as f64  + dt * self.velocity.1) as usize;
+        self.pos.0 = (self.pos.0 as f64 + dt * self.velocity.0) as usize;
+        self.pos.1 = (self.pos.1 as f64 + dt * self.velocity.1) as usize;
         self.velocity.0 *= 1.0 - dt * friction;
         self.velocity.1 *= 1.0 - dt * friction;
-        let h1 = map.get(self.pos.0, self.pos.1);
         let speed: f64 = (self.velocity.0.powi(2) + self.velocity.1.powi(2)).sqrt();
-        let mut ceq = self.volume * speed * (h0 - h1);
-        if ceq < 0.0 {
-            ceq = 0.0;
-        }
-        // let cdiff = ceq - 
+        let cdiff = {
+            let h1 = map.get(self.pos.0, self.pos.1);
+            let mut ceq: f64 = self.volume * speed * (h0 - h1);
+            if ceq < 0.0 {
+                ceq = 0.0;
+            }
+            ceq - self.sediment
+        };
+
+        // Move sediment
+        self.sediment += dt * cdiff * deposition_rate;
+        let h1 = map.get_mut(self.pos.0, self.pos.1);
+        *h1 -= dt * self.volume * deposition_rate * cdiff;
+
+        // Evaporate a bit
+        self.volume -= 1.0 - dt * evaporation_rate;
     }
 
     fn flood(&mut self, map: &mut [Vec<f64>]) {
@@ -314,11 +213,20 @@ impl WaterUnit {
     }
 }
 
-fn hydraulic_erosion_iteration2(map: &mut [Vec<f64>], stream: &mut [Vec<f64>], pool: &mut [Vec<f64>], track: &mut [Vec<bool>], steps: usize) {
-    for i in 0..steps {
-        let mut x = ::rand::random_range(1..=map[0].len() - 1);
-        let mut y = ::rand::random_range(1..=map.len() - 1);
+fn hydraulic_erosion_iteration(map: &mut Map<f64>, stream: &mut Map<f64>, pool: &mut Map<f64>, track: &mut Map<bool>, steps: usize) {
+    for _ in 0..steps {
+        let x = ::rand::random_range(1..=map.dims.0 - 1);
+        let y = ::rand::random_range(1..=map.dims.1 - 1);
         let mut drop = WaterUnit::new(x, y);
+        drop.descend(map, track);
+    }
+}
+
+fn do_erosion(map: &mut Map<f64>, stream: &mut Map<f64>, pool: &mut Map<f64>, track: &mut Map<bool>) {
+    if true {
+        // Very WIP, not great.
+        let drop_steps = 1000;
+        hydraulic_erosion_iteration(map, stream, pool, track, drop_steps);
     }
 }
 
@@ -327,7 +235,8 @@ async fn main() {
     let mut seed = ::rand::random();
     let mut w = screen_width();
     let mut h = screen_height();
-    let (mut heightmap, mut before) = generate_heightmap(seed);
+    //request_new_screen_size(1920., 1080.);
+    let mut heightmap = generate_heightmap();
 
     // Track tells where water ran this iteration
     let mut track = Map::<bool>::zeroed(w as usize, h as usize);
@@ -337,6 +246,11 @@ async fn main() {
 
     // Stream tells where water is moving in the grid, and how deep they are.
     let mut stream = Map::<f64>::zeroed(w as usize, h as usize);
+
+    let before = heightmap.clone();
+
+    // do erosion
+    do_erosion(&mut heightmap, &mut stream, &mut pool, &mut track);
 
     // Textures
     let mut before_texture = heightmap_to_texture(&before);
@@ -348,7 +262,9 @@ async fn main() {
         if screen_width() != w || screen_height() != h {
             w = screen_width();
             h = screen_height();
-            (heightmap, before) = generate_heightmap(seed);
+            heightmap = generate_heightmap();
+            let before = heightmap.clone();
+            do_erosion(&mut heightmap, &mut stream, &mut pool, &mut track);
             before_texture = heightmap_to_texture(&before);
             texture = heightmap_to_texture(&heightmap);
         }
@@ -369,8 +285,9 @@ async fn main() {
 
         if is_key_pressed(KeyCode::Enter) {
             println!("Generating new map...");
-            seed = ::rand::random();
-            (heightmap, before) = generate_heightmap(seed);
+            heightmap = generate_heightmap();
+            let before = heightmap.clone();
+            do_erosion(&mut heightmap, &mut stream, &mut pool, &mut track);
             before_texture = heightmap_to_texture(&before);
             texture = heightmap_to_texture(&heightmap);
         }
